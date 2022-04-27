@@ -1145,7 +1145,7 @@ func (r *RHMIReconciler) processStage(installation *rhmiv1alpha1.RHMI, stage *St
 		// Verify that watches for this productStatus CRDs have been created
 		config, err := configManager.ReadProduct(productStatus.Name)
 		if err != nil {
-			return rhmiv1alpha1.PhaseFailed, fmt.Errorf("Failed to read productStatus config for %s: %v", string(productStatus.Name), err)
+			return rhmiv1alpha1.PhaseFailed, fmt.Errorf("failed to read productStatus config for %s: %v", string(productStatus.Name), err)
 		}
 
 		if productStatus.Phase == rhmiv1alpha1.PhaseCompleted {
@@ -1158,10 +1158,10 @@ func (r *RHMIReconciler) processStage(installation *rhmiv1alpha1.RHMI, stage *St
 				if r.customInformers[gvk][config.GetNamespace()] == nil {
 					err = r.addCustomInformer(crd, namespace)
 					if err != nil {
-						return rhmiv1alpha1.PhaseFailed, fmt.Errorf("Failed to create a %s CRD watch for %s: %v", gvk, string(productStatus.Name), err)
+						return rhmiv1alpha1.PhaseFailed, fmt.Errorf("failed to create a %s CRD watch for %s: %v", gvk, string(productStatus.Name), err)
 					}
 				} else if !(*r.customInformers[gvk][config.GetNamespace()]).HasSynced() {
-					return rhmiv1alpha1.PhaseFailed, fmt.Errorf("A %s CRD Informer for %s has not synced", gvk, string(productStatus.Name))
+					return rhmiv1alpha1.PhaseFailed, fmt.Errorf("a %s CRD Informer for %s has not synced", gvk, string(productStatus.Name))
 				}
 			}
 		}

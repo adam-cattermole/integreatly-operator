@@ -20,7 +20,7 @@ import (
 func TestAWSSnapshotPostgres(t *testing.T) {
 	scheme, err := buildSchemeForAWSBackup()
 	if err != nil {
-		t.Errorf("Error building scheme: %w", err)
+		t.Errorf("Error building scheme: %s", err)
 		return
 	}
 
@@ -59,7 +59,7 @@ func TestAWSSnapshotPostgres(t *testing.T) {
 
 	err = executor.PerformBackup(client, time.Second*10)
 	if err != nil {
-		t.Errorf("Unexpected error performing postgres backup: %w", err)
+		t.Errorf("Unexpected error performing postgres backup: %s", err)
 	}
 }
 
@@ -68,7 +68,7 @@ func TestAWSSnapshotPostgres(t *testing.T) {
 func TestAWSSnapshotRedis(t *testing.T) {
 	scheme, err := buildSchemeForAWSBackup()
 	if err != nil {
-		t.Errorf("Error building scheme: %w", err)
+		t.Errorf("Error building scheme: %s", err)
 		return
 	}
 
@@ -107,7 +107,7 @@ func TestAWSSnapshotRedis(t *testing.T) {
 
 	err = executor.PerformBackup(client, time.Second*10)
 	if err != nil {
-		t.Errorf("Unexpected error performing postgres backup: %w", err)
+		t.Errorf("Unexpected error performing postgres backup: %s", err)
 	}
 }
 
