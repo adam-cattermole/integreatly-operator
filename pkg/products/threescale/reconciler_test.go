@@ -96,6 +96,7 @@ type ThreeScaleTestScenario struct {
 	Product              *integreatlyv1alpha1.RHMIProductStatus
 	Recorder             record.EventRecorder
 	Uninstall            bool
+	StatusChan           chan integreatlyv1alpha1.RHMIProductStatus
 }
 
 func getTestInstallation() *integreatlyv1alpha1.RHMI {
@@ -171,6 +172,7 @@ func TestThreeScale(t *testing.T) {
 			Product:        &integreatlyv1alpha1.RHMIProductStatus{},
 			Recorder:       setupRecorder(),
 			Uninstall:      false,
+			StatusChan:     make(chan integreatlyv1alpha1.RHMIProductStatus, 1),
 		},
 	}
 	for _, scenario := range scenarios {
@@ -190,7 +192,7 @@ func TestThreeScale(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Error creating new reconciler %s: %v", constants.ThreeScaleSubscriptionName, err)
 			}
-			status, err := tsReconciler.Reconcile(ctx, scenario.Installation, scenario.Product, scenario.FakeSigsClient, &quota.ProductConfigMock{}, scenario.Uninstall)
+			status, err := tsReconciler.Reconcile(ctx, scenario.Installation, scenario.Product, scenario.FakeSigsClient, &quota.ProductConfigMock{}, scenario.Uninstall, scenario.StatusChan)
 			if err != nil {
 				t.Fatalf("Error reconciling %s: %v", constants.ThreeScaleSubscriptionName, err)
 			}

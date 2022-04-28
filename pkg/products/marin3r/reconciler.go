@@ -3,9 +3,10 @@ package marin3r
 import (
 	"context"
 	"fmt"
+	"strings"
+
 	"github.com/3scale-ops/marin3r/apis/marin3r/v1alpha1"
 	"github.com/integr8ly/integreatly-operator/pkg/resources/quota"
-	"strings"
 
 	l "github.com/integr8ly/integreatly-operator/pkg/resources/logger"
 	"github.com/pkg/errors"
@@ -105,7 +106,13 @@ func NewReconciler(configManager config.ConfigReadWriter, installation *integrea
 	}, nil
 }
 
-func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1alpha1.RHMI, productStatus *integreatlyv1alpha1.RHMIProductStatus, client k8sclient.Client, productConfig quota.ProductConfig, uninstall bool) (integreatlyv1alpha1.StatusPhase, error) {
+func (r *Reconciler) EmitPhase(phase integreatlyv1alpha1.StatusPhase, productStatus *integreatlyv1alpha1.RHMIProductStatus, statusChan chan integreatlyv1alpha1.RHMIProductStatus) integreatlyv1alpha1.StatusPhase {
+	productStatus.Phase = phase
+	statusChan <- *productStatus
+	return phase
+}
+
+func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1alpha1.RHMI, productStatus *integreatlyv1alpha1.RHMIProductStatus, client k8sclient.Client, productConfig quota.ProductConfig, uninstall bool, statusChan chan integreatlyv1alpha1.RHMIProductStatus) (integreatlyv1alpha1.StatusPhase, error) {
 	r.log.Info("Start marin3r reconcile")
 
 	operatorNamespace := r.Config.GetOperatorNamespace()
@@ -114,44 +121,44 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 	phase, err := r.ReconcileFinalizer(ctx, client, installation, string(r.Config.GetProductName()), uninstall, func() (integreatlyv1alpha1.StatusPhase, error) {
 		threescaleConfig, err := r.ConfigManager.ReadThreeScale()
 		if err != nil {
-			return integreatlyv1alpha1.PhaseFailed, errors.Wrap(err, "could not read 3scale config from marin3r reconciler")
+			return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, productStatus, statusChan), errors.Wrap(err, "could not read 3scale config from marin3r reconciler")
 		}
 
 		enabledNamespaces := []string{threescaleConfig.GetNamespace()}
 		phase, err := ratelimit.DeleteEnvoyConfigsInNamespaces(ctx, client, enabledNamespaces...)
 		if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
-			return phase, err
+			return r.EmitPhase(phase, productStatus, statusChan), err
 		}
 
 		if err := r.deleteDiscoveryService(ctx, client); err != nil {
-			return integreatlyv1alpha1.PhaseFailed, fmt.Errorf("failed to delete discovery service: %v", err)
+			return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, productStatus, statusChan), fmt.Errorf("failed to delete discovery service: %v", err)
 		}
 
 		phase, err = resources.RemoveNamespace(ctx, installation, client, productNamespace, r.log)
 		if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
-			return phase, err
+			return r.EmitPhase(phase, productStatus, statusChan), err
 		}
 
 		phase, err = resources.RemoveNamespace(ctx, installation, client, operatorNamespace, r.log)
 		if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
-			return phase, err
+			return r.EmitPhase(phase, productStatus, statusChan), err
 		}
 
-		return integreatlyv1alpha1.PhaseCompleted, nil
+		return r.EmitPhase(integreatlyv1alpha1.PhaseCompleted, productStatus, statusChan), nil
 	}, r.log)
 	if err != nil || phase == integreatlyv1alpha1.PhaseFailed {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile finalizer", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	if uninstall {
-		return phase, nil
+		return r.EmitPhase(phase, productStatus, statusChan), nil
 	}
 
 	phase, err = reconcileEnvoyConfigRevisionsDeletion(ctx, client, r.installation.Spec.NamespacePrefix)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, fmt.Sprintf("Failed to reconcile the envoyConfigRevisionsV2"), err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	r.RateLimitConfig = productConfig.GetRateLimitConfig()
@@ -159,80 +166,80 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 	alertsConfig, err := marin3rconfig.GetAlertConfig(ctx, client, r.installation.Namespace)
 	if err != nil {
 		events.HandleError(r.recorder, installation, phase, "Failed to obtain rate limit alerts config", err)
-		return integreatlyv1alpha1.PhaseFailed, err
+		return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, productStatus, statusChan), err
 	}
 	r.AlertsConfig = alertsConfig
 
 	phase, err = r.ReconcileNamespace(ctx, operatorNamespace, installation, client, r.log)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, fmt.Sprintf("Failed to reconcile %s ns", operatorNamespace), err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	phase, err = r.ReconcileNamespace(ctx, productNamespace, installation, client, r.log)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, fmt.Sprintf("Failed to reconcile %s ns", productNamespace), err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	phase, err = r.reconcileSubscription(ctx, client, operatorNamespace, operatorNamespace)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, fmt.Sprintf("Failed to reconcile %s subscription", constants.CloudResourceSubscriptionName), err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	r.log.Info("about to start reconciling the discovery service")
 	phase, err = r.reconcileDiscoveryService(ctx, client, productNamespace)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, fmt.Sprintf("Failed to reconcile DiscoveryService cr"), err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	phase, err = r.reconcileRedis(ctx, client)
 	if err != nil {
-		return integreatlyv1alpha1.PhaseFailed, err
+		return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, productStatus, statusChan), err
 	}
 	if phase == integreatlyv1alpha1.PhaseAwaitingComponents {
-		return phase, nil
+		return r.EmitPhase(phase, productStatus, statusChan), nil
 	}
 
 	phase, err = NewRateLimitServiceReconciler(r.RateLimitConfig, installation, productNamespace, externalRedisSecretName).
 		ReconcileRateLimitService(ctx, client, productConfig)
 	if err != nil {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile rate limit service", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 	if phase == integreatlyv1alpha1.PhaseAwaitingComponents {
-		return phase, nil
+		return r.EmitPhase(phase, productStatus, statusChan), nil
 	}
 
 	phase, err = r.reconcileServiceMonitor(ctx, client, productNamespace)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, fmt.Sprintf("Failed to reconcile Prometheus service monitor"), err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	alertsReconciler := r.newAlertReconciler(r.log, r.installation.Spec.Type)
 	if phase, err := alertsReconciler.ReconcileAlerts(ctx, client); err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile Marin3r alerts", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	// Reconcile API usage alerts
 	phase, err = r.reconcileAlerts(ctx, client, installation)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile alerts", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	rejectedRequestsAlertReconciler, err := r.newRejectedRequestsAlertsReconciler(r.log, r.installation.Spec.Type)
 	if err != nil {
 		events.HandleError(r.recorder, installation, phase, "Failed to instantiate rejected requests alert reconciler", err)
-		return integreatlyv1alpha1.PhaseFailed, err
+		return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, productStatus, statusChan), err
 	}
 	if phase, err := rejectedRequestsAlertReconciler.ReconcileAlerts(ctx, client); err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile rejected requests alert", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	productStatus.Host = r.Config.GetHost()
@@ -241,7 +248,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 
 	events.HandleProductComplete(r.recorder, installation, integreatlyv1alpha1.ProductsStage, r.Config.GetProductName())
 	r.log.Info("Installation successful")
-	return integreatlyv1alpha1.PhaseCompleted, nil
+	return r.EmitPhase(integreatlyv1alpha1.PhaseCompleted, productStatus, statusChan), nil
 }
 
 func (r *Reconciler) reconcileAlerts(ctx context.Context, client k8sclient.Client, installation *integreatlyv1alpha1.RHMI) (integreatlyv1alpha1.StatusPhase, error) {

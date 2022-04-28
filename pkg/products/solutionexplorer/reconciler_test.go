@@ -2,8 +2,9 @@ package solutionexplorer
 
 import (
 	"context"
-	"github.com/integr8ly/integreatly-operator/pkg/resources/quota"
 	"testing"
+
+	"github.com/integr8ly/integreatly-operator/pkg/resources/quota"
 
 	l "github.com/integr8ly/integreatly-operator/pkg/resources/logger"
 
@@ -199,7 +200,7 @@ func TestSolutionExplorer(t *testing.T) {
 				return
 			}
 
-			status, err := reconciler.Reconcile(context.TODO(), tc.Installation, tc.Product, tc.client, &quota.ProductConfigMock{}, tc.Uninstall)
+			status, err := reconciler.Reconcile(context.TODO(), tc.Installation, tc.Product, tc.client, &quota.ProductConfigMock{}, tc.Uninstall, nil)
 			if err != nil && !tc.ExpectErr {
 				t.Fatalf("expected error but got one: %v", err)
 			}

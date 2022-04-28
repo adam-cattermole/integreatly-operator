@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/integr8ly/integreatly-operator/pkg/resources/k8s"
 	l "github.com/integr8ly/integreatly-operator/pkg/resources/logger"
 	apiextensionv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
 	"github.com/integr8ly/integreatly-operator/pkg/resources/quota"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 
 	"github.com/integr8ly/integreatly-operator/pkg/addon"
@@ -115,7 +115,13 @@ func (r *Reconciler) VerifyVersion(installation *integreatlyv1alpha1.RHMI) bool 
 	)
 }
 
-func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1alpha1.RHMI, productStatus *integreatlyv1alpha1.RHMIProductStatus, client k8sclient.Client, _ quota.ProductConfig, uninstall bool) (integreatlyv1alpha1.StatusPhase, error) {
+func (r *Reconciler) EmitPhase(phase integreatlyv1alpha1.StatusPhase, productStatus *integreatlyv1alpha1.RHMIProductStatus, statusChan chan integreatlyv1alpha1.RHMIProductStatus) integreatlyv1alpha1.StatusPhase {
+	productStatus.Phase = phase
+	statusChan <- *productStatus
+	return phase
+}
+
+func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1alpha1.RHMI, productStatus *integreatlyv1alpha1.RHMIProductStatus, client k8sclient.Client, _ quota.ProductConfig, uninstall bool, statusChan chan integreatlyv1alpha1.RHMIProductStatus) (integreatlyv1alpha1.StatusPhase, error) {
 	operatorNamespace := r.Config.GetOperatorNamespace()
 
 	phase, err := r.ReconcileFinalizer(ctx, client, installation, string(r.Config.GetProductName()), uninstall, func() (integreatlyv1alpha1.StatusPhase, error) {
@@ -125,48 +131,48 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 
 			phase, err := r.removeSnapshots(ctx, installation, client)
 			if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
-				return phase, err
+				return r.EmitPhase(phase, productStatus, statusChan), err
 			}
 
 			// overrides cro default deletion strategy to delete resources snapshots
 			phase, err = r.createDeletionStrategy(ctx, installation, client)
 			if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
-				return phase, err
+				return r.EmitPhase(phase, productStatus, statusChan), err
 			}
 
 			// ensure resources are cleaned up before deleting the namespace
 			phase, err = r.cleanupResources(ctx, installation, client)
 			if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
-				return phase, err
+				return r.EmitPhase(phase, productStatus, statusChan), err
 			}
 
 			// remove the namespace
 			phase, err = resources.RemoveNamespace(ctx, installation, client, operatorNamespace, r.log)
 			if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
-				return phase, err
+				return r.EmitPhase(phase, productStatus, statusChan), err
 			}
 		}
 		return integreatlyv1alpha1.PhaseCompleted, nil
 	}, r.log)
 	if err != nil || phase == integreatlyv1alpha1.PhaseFailed {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile finalizer", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	if uninstall {
-		return phase, nil
+		return r.EmitPhase(phase, productStatus, statusChan), nil
 	}
 
 	phase, err = r.ReconcileNamespace(ctx, operatorNamespace, installation, client, r.log)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, fmt.Sprintf("Failed to reconcile %s namespace", operatorNamespace), err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	if err := r.reconcileCIDRValue(ctx, client); err != nil {
 		phase := integreatlyv1alpha1.PhaseFailed
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile CIDR value", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	// In this case due to cloudresources reconciler is always installed in the
@@ -175,46 +181,46 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 	phase, err = r.reconcileSubscription(ctx, client, installation, operatorNamespace, operatorNamespace)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, fmt.Sprintf("Failed to reconcile %s subscription", constants.CloudResourceSubscriptionName), err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	phase, err = r.addServiceUpdates(ctx, client, croProviders.RedisResourceType, redisServiceUpdatesToInstall)
 	if err != nil {
 		phase := integreatlyv1alpha1.PhaseFailed
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile redis service updates", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 	if phase == integreatlyv1alpha1.PhaseInProgress {
-		return phase, nil
+		return r.EmitPhase(phase, productStatus, statusChan), nil
 	}
 
 	phase, err = r.addServiceUpdates(ctx, client, croProviders.PostgresResourceType, postgresServiceUpdateTimestamp)
 	if err != nil {
 		phase := integreatlyv1alpha1.PhaseFailed
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile postgres service updates", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	if phase == integreatlyv1alpha1.PhaseInProgress {
-		return phase, nil
+		return r.EmitPhase(phase, productStatus, statusChan), nil
 	}
 
 	phase, err = r.reconcileBackupsStorage(ctx, installation, client)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	alertsReconciler, err := r.newAlertsReconciler(ctx, client, r.log, r.installation.Spec.Type, r.installation.Namespace)
 	if err != nil {
 		events.HandleError(r.recorder, installation, phase, "Failed to get new alerts reconciler", err)
 		r.log.Error("Error getting cloud resources alerts reconciler", err)
-		return integreatlyv1alpha1.PhaseFailed, err
+		return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, productStatus, statusChan), err
 	}
 
 	phase, err = alertsReconciler.ReconcileAlerts(ctx, client)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile operator endpoint available alerts", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 	productStatus.Host = r.Config.GetHost()
 	productStatus.Version = r.Config.GetProductVersion()
@@ -222,12 +228,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 
 	err = r.ConfigManager.WriteConfig(r.Config)
 	if err != nil {
-		return integreatlyv1alpha1.PhaseFailed, fmt.Errorf("could not write cloud resources config: %w", err)
+		return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, productStatus, statusChan), fmt.Errorf("could not write cloud resources config: %w", err)
 	}
 
 	events.HandleProductComplete(r.recorder, installation, integreatlyv1alpha1.CloudResourcesStage, r.Config.GetProductName())
 	r.log.Infof("Reconcile successful", l.Fields{"productStatus": r.Config.GetProductName()})
-	return integreatlyv1alpha1.PhaseCompleted, nil
+	return r.EmitPhase(integreatlyv1alpha1.PhaseCompleted, productStatus, statusChan), nil
 }
 
 func (r *Reconciler) removeSnapshots(ctx context.Context, installation *integreatlyv1alpha1.RHMI, client k8sclient.Client) (integreatlyv1alpha1.StatusPhase, error) {
@@ -239,7 +245,7 @@ func (r *Reconciler) removeSnapshots(ctx context.Context, installation *integrea
 			Name: "postgressnapshots.integreatly.org",
 		},
 	}
-	crdExists, err := resources.Exists(ctx, client, postgresSnapshotCRD)
+	crdExists, err := k8s.Exists(ctx, client, postgresSnapshotCRD)
 	if err != nil {
 		r.log.Error("Error checking Postgres Snapshot CRD existence: ", err)
 		return integreatlyv1alpha1.PhaseFailed, err
@@ -338,7 +344,7 @@ func (r *Reconciler) cleanupResources(ctx context.Context, installation *integre
 			Name: "postgres.integreatly.org",
 		},
 	}
-	crdExists, err := resources.Exists(ctx, client, postgresInstancesCRD)
+	crdExists, err := k8s.Exists(ctx, client, postgresInstancesCRD)
 	if err != nil {
 		r.log.Error("Error checking Postgres CRD existence: ", err)
 		return integreatlyv1alpha1.PhaseFailed, err
@@ -465,7 +471,7 @@ func overrideStrategyConfig(resourceType string, croStrategyConfig *corev1.Confi
 		return fmt.Errorf("failed to unmarshal strategy mapping for resource type %s %w", resourceType, err)
 	}
 
-	for tier, _ := range strategyConfig {
+	for tier := range strategyConfig {
 		deleteStrategyJSON, err := json.Marshal(deleteStrategy)
 		if err != nil {
 			return err
@@ -548,7 +554,7 @@ func (r *Reconciler) reconcileCIDRValue(ctx context.Context, client k8sclient.Cl
 		Name:      r.Config.GetStrategiesConfigMapName(),
 		Namespace: r.installation.Namespace,
 	}, cfgMap); err != nil {
-		if errors.IsNotFound(err) {
+		if k8serr.IsNotFound(err) {
 			return nil
 		}
 		return err
@@ -584,7 +590,7 @@ func (r *Reconciler) reconcileCIDRValue(ctx context.Context, client k8sclient.Cl
 		network[croUtil.TierProduction].CreateStrategy.CidrBlock = ""
 	}
 
-	for key, _ := range network {
+	for key := range network {
 		network[key].CreateStrategy.CidrBlock = cidrValue
 	}
 

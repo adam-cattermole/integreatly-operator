@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"testing"
+
 	croTypes "github.com/integr8ly/cloud-resource-operator/apis/integreatly/v1alpha1/types"
 	"github.com/integr8ly/integreatly-operator/pkg/resources"
 	"github.com/integr8ly/integreatly-operator/pkg/resources/quota"
@@ -12,7 +14,6 @@ import (
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"testing"
 
 	l "github.com/integr8ly/integreatly-operator/pkg/resources/logger"
 
@@ -192,6 +193,7 @@ func TestReconciler_config(t *testing.T) {
 		ApiUrl                string
 		KeycloakClientFactory keycloakCommon.KeycloakClientFactory
 		Uninstall             bool
+		StatusChan            chan integreatlyv1alpha1.RHMIProductStatus
 	}{
 		{
 			Name:            "test error on failed config",
@@ -211,6 +213,7 @@ func TestReconciler_config(t *testing.T) {
 			ApiUrl:                "https://serverurl",
 			KeycloakClientFactory: getMoqKeycloakClientFactory(),
 			Uninstall:             false,
+			StatusChan:            make(chan integreatlyv1alpha1.RHMIProductStatus, 1),
 		},
 	}
 
@@ -240,7 +243,7 @@ func TestReconciler_config(t *testing.T) {
 				return
 			}
 
-			status, err := testReconciler.Reconcile(context.TODO(), tc.Installation, tc.Product, tc.FakeClient, &quota.ProductConfigMock{}, tc.Uninstall)
+			status, err := testReconciler.Reconcile(context.TODO(), tc.Installation, tc.Product, tc.FakeClient, &quota.ProductConfigMock{}, tc.Uninstall, tc.StatusChan)
 			if err != nil && !tc.ExpectError {
 				t.Fatalf("expected error but got one: %v", err)
 			}
@@ -638,6 +641,7 @@ func TestReconciler_full_RHMI_Reconcile(t *testing.T) {
 		KeycloakClientFactory keycloakCommon.KeycloakClientFactory
 		ProductConfig         *quota.ProductConfigMock
 		Uninstall             bool
+		StatusChan            chan integreatlyv1alpha1.RHMIProductStatus
 	}{
 		{
 			Name:            "test successful reconcile",
@@ -677,7 +681,8 @@ func TestReconciler_full_RHMI_Reconcile(t *testing.T) {
 					return nil
 				},
 			},
-			Uninstall: false,
+			Uninstall:  false,
+			StatusChan: make(chan integreatlyv1alpha1.RHMIProductStatus, 1),
 		},
 	}
 
@@ -698,7 +703,7 @@ func TestReconciler_full_RHMI_Reconcile(t *testing.T) {
 				t.Fatalf("unexpected error : '%v', expected: '%v'", err, tc.ExpectedError)
 			}
 
-			status, err := testReconciler.Reconcile(context.TODO(), tc.Installation, tc.Product, tc.FakeClient, tc.ProductConfig, tc.Uninstall)
+			status, err := testReconciler.Reconcile(context.TODO(), tc.Installation, tc.Product, tc.FakeClient, tc.ProductConfig, tc.Uninstall, tc.StatusChan)
 
 			if err != nil && !tc.ExpectError {
 				t.Fatalf("expected no errors, but got one: %v", err)
@@ -910,6 +915,7 @@ func TestReconciler_full_RHOAM_Reconcile(t *testing.T) {
 		KeycloakClientFactory keycloakCommon.KeycloakClientFactory
 		ProductConfig         *quota.ProductConfigMock
 		Uninstall             bool
+		StatusChan            chan integreatlyv1alpha1.RHMIProductStatus
 	}{
 		{
 			Name:            "RHOAM - test successful reconcile",
@@ -949,7 +955,8 @@ func TestReconciler_full_RHOAM_Reconcile(t *testing.T) {
 					return nil
 				},
 			},
-			Uninstall: false,
+			Uninstall:  false,
+			StatusChan: make(chan integreatlyv1alpha1.RHMIProductStatus, 1),
 		},
 	}
 
@@ -970,7 +977,7 @@ func TestReconciler_full_RHOAM_Reconcile(t *testing.T) {
 				t.Fatalf("unexpected error : '%v', expected: '%v'", err, tc.ExpectedError)
 			}
 
-			status, err := testReconciler.Reconcile(context.TODO(), tc.Installation, tc.Product, tc.FakeClient, tc.ProductConfig, tc.Uninstall)
+			status, err := testReconciler.Reconcile(context.TODO(), tc.Installation, tc.Product, tc.FakeClient, tc.ProductConfig, tc.Uninstall, tc.StatusChan)
 
 			if err != nil && !tc.ExpectError {
 				t.Fatalf("expected no errors, but got one: %v", err)

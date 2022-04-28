@@ -741,11 +741,18 @@ func (r *RHMIReconciler) handleUninstall(installation *rhmiv1alpha1.RHMI, instal
 		if stage.Name == rhmiv1alpha1.BootstrapStage {
 			pendingUninstalls = r.handleUninstallBootstrap(installation, finalizers, stage, configManager, merr, request)
 		} else {
+			statusChan := make(chan rhmiv1alpha1.RHMIProductStatus, len(stage.Products))
 			for product := range stage.Products {
-				productPending := r.handleUninstallProduct(installation, product, stage, finalizers, configManager, merr)
+				productPending := r.handleUninstallProduct(installation, product, stage, finalizers, configManager, merr, statusChan)
 				if productPending && !pendingUninstalls {
 					pendingUninstalls = true
 				}
+			}
+
+			for range stage.Products {
+				logrus.Info("Retrieving results from chan")
+				status := <-statusChan
+				logrus.Infof("Status retrieved: %+v", status)
 			}
 		}
 		//don't move to next stage until all products in this stage are removed
@@ -810,7 +817,7 @@ func (r *RHMIReconciler) handleUninstall(installation *rhmiv1alpha1.RHMI, instal
 	return retryRequeue, err
 }
 
-func (r *RHMIReconciler) handleUninstallProduct(installation *rhmiv1alpha1.RHMI, product rhmiv1alpha1.ProductName, stage Stage, finalizers []string, configManager *config.Manager, merr *resources.MultiErr) bool {
+func (r *RHMIReconciler) handleUninstallProduct(installation *rhmiv1alpha1.RHMI, product rhmiv1alpha1.ProductName, stage Stage, finalizers []string, configManager *config.Manager, merr *resources.MultiErr, statusChan chan rhmiv1alpha1.RHMIProductStatus) bool {
 	productName := string(product)
 	log.Infof("Uninstalling ", l.Fields{"product": productName, "stage": stage.Name})
 	productStatus := installation.GetProductStatusObject(product)
@@ -833,7 +840,7 @@ func (r *RHMIReconciler) handleUninstallProduct(installation *rhmiv1alpha1.RHMI,
 		if productStatus.Uninstall || installation.DeletionTimestamp != nil {
 			uninstall = true
 		}
-		phase, err := reconciler.Reconcile(context.TODO(), installation, productStatus, serverClient, quota.QuotaProductConfig{}, uninstall)
+		phase, err := reconciler.Reconcile(context.TODO(), installation, productStatus, serverClient, quota.QuotaProductConfig{}, uninstall, statusChan)
 		if err != nil {
 			merr.Add(fmt.Errorf("Failed to reconcile product %s: %w", productName, err))
 		}
@@ -1107,6 +1114,7 @@ func (r *RHMIReconciler) processStage(installation *rhmiv1alpha1.RHMI, stage *St
 
 	var mErr error
 	productsAux := make(map[rhmiv1alpha1.ProductName]rhmiv1alpha1.RHMIProductStatus)
+	statusChan := make(chan rhmiv1alpha1.RHMIProductStatus, len(stage.Products))
 	installation.Status.Stage = stage.Name
 
 	for productName, productStatus := range stage.Products {
@@ -1133,7 +1141,7 @@ func (r *RHMIReconciler) processStage(installation *rhmiv1alpha1.RHMI, stage *St
 		if productStatus.Uninstall || installation.DeletionTimestamp != nil {
 			uninstall = true
 		}
-		productStatus.Phase, err = reconciler.Reconcile(context.TODO(), installation, &productStatus, serverClient, quotaconfig.GetProduct(productName), uninstall)
+		productStatus.Phase, err = reconciler.Reconcile(context.TODO(), installation, &productStatus, serverClient, quotaconfig.GetProduct(productName), uninstall, statusChan)
 
 		if err != nil {
 			if mErr == nil {
@@ -1172,6 +1180,13 @@ func (r *RHMIReconciler) processStage(installation *rhmiv1alpha1.RHMI, stage *St
 		}
 		productsAux[productStatus.Name] = productStatus
 		*stage = Stage{Name: stage.Name, Products: productsAux}
+	}
+
+	// TODO: gather results from all go routines
+	for range stage.Products {
+		logrus.Info("Retrieving results from chan")
+		status := <-statusChan
+		logrus.Infof("Status retrieved: %+v", status)
 	}
 
 	//some products in this stage have not installed successfully yet

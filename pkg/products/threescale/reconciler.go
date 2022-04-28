@@ -4,18 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+
 	envoycorev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	"github.com/integr8ly/integreatly-operator/pkg/products/observability"
 	cs "github.com/integr8ly/integreatly-operator/pkg/resources/custom-smtp"
 	prometheus "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
-	"os"
+
+	"net/http"
+	"strconv"
+	"strings"
 
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	"github.com/integr8ly/integreatly-operator/pkg/resources/quota"
 	"github.com/integr8ly/integreatly-operator/pkg/resources/user"
-	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/integr8ly/integreatly-operator/pkg/metrics"
 
@@ -181,7 +183,13 @@ func (r *Reconciler) VerifyVersion(installation *integreatlyv1alpha1.RHMI) bool 
 	)
 }
 
-func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1alpha1.RHMI, productStatus *integreatlyv1alpha1.RHMIProductStatus, serverClient k8sclient.Client, productConfig quota.ProductConfig, uninstall bool) (integreatlyv1alpha1.StatusPhase, error) {
+func (r *Reconciler) EmitPhase(phase integreatlyv1alpha1.StatusPhase, productStatus *integreatlyv1alpha1.RHMIProductStatus, statusChan chan integreatlyv1alpha1.RHMIProductStatus) integreatlyv1alpha1.StatusPhase {
+	productStatus.Phase = phase
+	statusChan <- *productStatus
+	return phase
+}
+
+func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1alpha1.RHMI, productStatus *integreatlyv1alpha1.RHMIProductStatus, serverClient k8sclient.Client, productConfig quota.ProductConfig, uninstall bool, statusChan chan integreatlyv1alpha1.RHMIProductStatus) (integreatlyv1alpha1.StatusPhase, error) {
 	r.log.Info("Start Reconciling")
 	operatorNamespace := r.Config.GetOperatorNamespace()
 	productNamespace := r.Config.GetNamespace()
@@ -190,88 +198,88 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 		if integreatlyv1alpha1.IsRHOAM(integreatlyv1alpha1.InstallationType(installation.Spec.Type)) {
 			phase, err := ratelimit.DeleteEnvoyConfigsInNamespaces(ctx, serverClient, productNamespace)
 			if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
-				return phase, err
+				return r.EmitPhase(phase, productStatus, statusChan), err
 			}
 		}
 
 		phase, err := resources.RemoveNamespace(ctx, installation, serverClient, productNamespace, r.log)
 		if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
-			return phase, err
+			return r.EmitPhase(phase, productStatus, statusChan), err
 		}
 
 		phase, err = resources.RemoveNamespace(ctx, installation, serverClient, operatorNamespace, r.log)
 		if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
-			return phase, err
+			return r.EmitPhase(phase, productStatus, statusChan), err
 		}
 
 		err = resources.RemoveOauthClient(r.oauthv1Client, r.getOAuthClientName(), r.log)
 		if err != nil {
-			return integreatlyv1alpha1.PhaseFailed, err
+			return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, productStatus, statusChan), err
 		}
 
 		phase, err = r.deleteConsoleLink(ctx, serverClient)
 		if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
-			return phase, err
+			return r.EmitPhase(phase, productStatus, statusChan), err
 		}
 
-		return integreatlyv1alpha1.PhaseCompleted, nil
+		return r.EmitPhase(integreatlyv1alpha1.PhaseCompleted, productStatus, statusChan), nil
 	}, r.log)
 	if err != nil || phase == integreatlyv1alpha1.PhaseFailed {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile finalizer", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	if uninstall {
-		return phase, nil
+		return r.EmitPhase(phase, productStatus, statusChan), nil
 	}
 
 	phase, err = r.ReconcileNamespace(ctx, operatorNamespace, installation, serverClient, r.log)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, fmt.Sprintf("Failed to reconcile %s ns", operatorNamespace), err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	phase, err = r.ReconcileNamespace(ctx, productNamespace, installation, serverClient, r.log)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, fmt.Sprintf("Failed to reconcile %s ns", productNamespace), err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	phase, err = r.restoreSystemSecrets(ctx, serverClient, installation)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, fmt.Sprintf("Failed to reconcile %s ns", productNamespace), err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	err = resources.CopyPullSecretToNameSpace(ctx, installation.GetPullSecretSpec(), productNamespace, registrySecretName, serverClient)
 	if err != nil {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile pull secret", err)
-		return integreatlyv1alpha1.PhaseFailed, err
+		return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, productStatus, statusChan), err
 	}
 
 	phase, err = r.reconcileSubscription(ctx, serverClient, installation, productNamespace, operatorNamespace)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, fmt.Sprintf("Failed to reconcile %s subscription", constants.ThreeScaleSubscriptionName), err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	if r.installation.GetDeletionTimestamp() == nil {
 		phase, err = r.reconcileSMTPCredentials(ctx, serverClient)
 		if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 			events.HandleError(r.recorder, installation, phase, "Failed to reconcile smtp credentials", err)
-			return phase, err
+			return r.EmitPhase(phase, productStatus, statusChan), err
 		}
 
 		phase, err = r.reconcileExternalDatasources(ctx, serverClient)
 		if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 			events.HandleError(r.recorder, installation, phase, "Failed to reconcile external data sources", err)
-			return phase, err
+			return r.EmitPhase(phase, productStatus, statusChan), err
 		}
 
 		phase, err = r.reconcileBlobStorage(ctx, serverClient)
 		if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 			events.HandleError(r.recorder, installation, phase, "Failed to reconcile blob storage", err)
-			return phase, err
+			return r.EmitPhase(phase, productStatus, statusChan), err
 		}
 	}
 
@@ -279,14 +287,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 	r.log.Infof("reconcileComponents", l.Fields{"phase": phase})
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile components", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	if integreatlyv1alpha1.IsRHOAMMultitenant(integreatlyv1alpha1.InstallationType(installation.Spec.Type)) {
 		phase, err = r.reconcile3scaleMultiTenancy(ctx, serverClient)
 		if err != nil {
 			r.log.Error("reconcile3scaleMultiTenancy", err)
-			return phase, err
+			return r.EmitPhase(phase, productStatus, statusChan), err
 		}
 	}
 
@@ -299,28 +307,28 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 			r.log.Warning("Failed to reconcileOutgoingEmailAddress: " + err.Error())
 			events.HandleError(r.recorder, installation, phase, "Failed to reconcileOutgoingEmailAddress", err)
 		}
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	phase, err = r.reconcileRHSSOIntegration(ctx, serverClient)
 	r.log.Infof("reconcileRHSSOIntegration", l.Fields{"phase": phase})
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile rhsso integration", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	phase, err = r.reconcileBlackboxTargets(ctx, serverClient)
 	r.log.Infof("reconcileBlackboxTargets", l.Fields{"phase": phase})
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile blackbox targets", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	phase, err = r.reconcilePrometheusProbes(ctx, serverClient)
 	r.log.Infof("reconcilePrometheusProbes", l.Fields{"phase": phase})
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile prometheus probes", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	if !integreatlyv1alpha1.IsRHOAMMultitenant(integreatlyv1alpha1.InstallationType(installation.Spec.Type)) {
@@ -328,19 +336,19 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 		r.log.Infof("reconcileOpenshiftUsers", l.Fields{"phase": phase})
 		if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 			events.HandleError(r.recorder, installation, phase, "Failed to reconcile openshift users", err)
-			return phase, err
+			return r.EmitPhase(phase, productStatus, statusChan), err
 		}
 	}
 
 	clientSecret, err := r.getOauthClientSecret(ctx, serverClient)
 	if err != nil {
 		events.HandleError(r.recorder, installation, integreatlyv1alpha1.PhaseFailed, "Failed to get oauth client secret", err)
-		return integreatlyv1alpha1.PhaseFailed, err
+		return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, productStatus, statusChan), err
 	}
 
 	threescaleMasterRoute, err := r.getThreescaleRoute(ctx, serverClient, "system-master", nil)
 	if err != nil || threescaleMasterRoute == nil {
-		return integreatlyv1alpha1.PhaseFailed, err
+		return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, productStatus, statusChan), err
 	}
 	phase, err = r.ReconcileOauthClient(ctx, installation, &oauthv1.OAuthClient{
 		ObjectMeta: metav1.ObjectMeta{
@@ -355,28 +363,28 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 	r.log.Infof("ReconcileOauthClient", l.Fields{"phase": phase})
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile oauth client", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	phase, err = r.reconcileServiceDiscovery(ctx, serverClient)
 	r.log.Infof("reconcileServiceDiscovery", l.Fields{"phase": phase})
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile service discovery", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	phase, err = r.backupSystemSecrets(ctx, serverClient, installation)
 	r.log.Infof("backupSystemSecrets", l.Fields{"phase": phase})
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile templates", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	phase, err = r.reconcileRouteEditRole(ctx, serverClient)
 	r.log.Infof("reconcileRouteEditRole", l.Fields{"phase": phase})
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile roles", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	if integreatlyv1alpha1.IsRHOAM(integreatlyv1alpha1.InstallationType(installation.Spec.Type)) {
@@ -384,23 +392,23 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 		phase, err = r.reconcileRatelimitingTo3scaleComponents(ctx, serverClient, r.installation)
 		if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 			events.HandleError(r.recorder, installation, phase, "Failed to reconcile rate limiting to 3scale components", err)
-			return phase, err
+			return r.EmitPhase(phase, productStatus, statusChan), err
 		}
 
 		alertsReconciler := r.newEnvoyAlertReconciler(r.log, r.installation.Spec.Type)
 		if phase, err := alertsReconciler.ReconcileAlerts(ctx, serverClient); err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 			events.HandleError(r.recorder, installation, phase, "Failed to reconcile threescale alerts", err)
-			return phase, err
+			return r.EmitPhase(phase, productStatus, statusChan), err
 		}
 	}
 
 	alertsReconciler, err := r.newAlertReconciler(r.log, r.installation.Spec.Type, ctx, serverClient)
 	if err != nil {
-		return integreatlyv1alpha1.PhaseFailed, err
+		return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, productStatus, statusChan), err
 	}
 	if phase, err := alertsReconciler.ReconcileAlerts(ctx, serverClient); err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile threescale alerts", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	if !integreatlyv1alpha1.IsRHOAMMultitenant(integreatlyv1alpha1.InstallationType(installation.Spec.Type)) {
@@ -408,7 +416,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 		r.log.Infof("reconcileConsoleLink", l.Fields{"phase": phase})
 		if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 			events.HandleError(r.recorder, installation, phase, "Failed to reconcile console link", err)
-			return phase, err
+			return r.EmitPhase(phase, productStatus, statusChan), err
 		}
 	}
 
@@ -416,14 +424,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 	r.log.Infof("reconcileDeploymentConfigs", l.Fields{"phase": phase})
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile deployment configs", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	phase, err = r.changesDeploymentConfigsEnvVar(ctx, serverClient)
 	r.log.Infof("changesDeploymentConfigsEnvVar", l.Fields{"phase": phase})
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to change deployment config envvars", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	// Ensure deployment configs are ready before returning phase complete
@@ -431,7 +439,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 	r.log.Infof("ensureDeploymentConfigsReady", l.Fields{"phase": phase})
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to ensure deployment configs are ready", err)
-		return phase, err
+		return r.EmitPhase(phase, productStatus, statusChan), err
 	}
 
 	productStatus.Host = r.Config.GetHost()
@@ -440,7 +448,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 
 	events.HandleProductComplete(r.recorder, installation, integreatlyv1alpha1.ProductsStage, r.Config.GetProductName())
 	r.log.Infof("Installation reconciled successfully", l.Fields{"productStatus": r.Config.GetProductName()})
-	return integreatlyv1alpha1.PhaseCompleted, nil
+	return r.EmitPhase(integreatlyv1alpha1.PhaseCompleted, productStatus, statusChan), nil
 }
 
 // restores seed and master api cast secrets if available

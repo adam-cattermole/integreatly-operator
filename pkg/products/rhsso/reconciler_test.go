@@ -197,6 +197,7 @@ func TestReconciler_config(t *testing.T) {
 		APIURL                string
 		KeycloakClientFactory keycloakCommon.KeycloakClientFactory
 		Uninstall             bool
+		StatusChan            chan integreatlyv1alpha1.RHMIProductStatus
 	}{
 		{
 			Name:            "test error on failed config",
@@ -216,6 +217,7 @@ func TestReconciler_config(t *testing.T) {
 			APIURL:                "https://serverurl",
 			KeycloakClientFactory: getMoqKeycloakClientFactory(),
 			Uninstall:             false,
+			StatusChan:            make(chan integreatlyv1alpha1.RHMIProductStatus, 1),
 		},
 	}
 
@@ -245,7 +247,7 @@ func TestReconciler_config(t *testing.T) {
 				return
 			}
 
-			status, err := testReconciler.Reconcile(context.TODO(), tc.Installation, tc.Product, tc.FakeClient, &quota.ProductConfigMock{}, tc.Uninstall)
+			status, err := testReconciler.Reconcile(context.TODO(), tc.Installation, tc.Product, tc.FakeClient, &quota.ProductConfigMock{}, tc.Uninstall, tc.StatusChan)
 			if err != nil && !tc.ExpectError {
 				t.Fatalf("expected no errors, but got one: %v", err)
 			}
@@ -611,6 +613,7 @@ func TestReconciler_fullReconcile(t *testing.T) {
 		ApiUrl                string
 		KeycloakClientFactory keycloakCommon.KeycloakClientFactory
 		Uninstall             bool
+		StatusChan            chan integreatlyv1alpha1.RHMIProductStatus
 	}{
 		{
 			Name:            "test successful reconcile",
@@ -646,6 +649,7 @@ func TestReconciler_fullReconcile(t *testing.T) {
 			ApiUrl:                "https://serverurl",
 			KeycloakClientFactory: getMoqKeycloakClientFactory(),
 			Uninstall:             false,
+			StatusChan:            make(chan integreatlyv1alpha1.RHMIProductStatus, 1),
 		},
 	}
 
@@ -666,7 +670,7 @@ func TestReconciler_fullReconcile(t *testing.T) {
 				t.Fatalf("unexpected error : '%v', expected: '%v'", err, tc.ExpectedError)
 			}
 
-			status, err := testReconciler.Reconcile(context.TODO(), tc.Installation, tc.Product, tc.FakeClient, &quota.ProductConfigMock{}, tc.Uninstall)
+			status, err := testReconciler.Reconcile(context.TODO(), tc.Installation, tc.Product, tc.FakeClient, &quota.ProductConfigMock{}, tc.Uninstall, tc.StatusChan)
 
 			if err != nil && !tc.ExpectError {
 				t.Fatalf("expected no errors, but got one: %v", err)

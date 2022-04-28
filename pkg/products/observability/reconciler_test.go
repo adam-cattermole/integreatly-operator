@@ -2,6 +2,9 @@ package observability
 
 import (
 	"context"
+	"reflect"
+	"testing"
+
 	"github.com/integr8ly/integreatly-operator/apis/v1alpha1"
 	integreatlyv1alpha1 "github.com/integr8ly/integreatly-operator/apis/v1alpha1"
 	moqclient "github.com/integr8ly/integreatly-operator/pkg/client"
@@ -19,9 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
-	"reflect"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"testing"
 
 	observability "github.com/redhat-developer/observability-operator/v3/api/v1"
 	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -119,6 +120,7 @@ func TestReconciler_Reconcile(t *testing.T) {
 		client       client.Client
 		in4          quota.ProductConfig
 		uninstall    bool
+		statusChan   chan integreatlyv1alpha1.RHMIProductStatus
 	}
 	tests := []struct {
 		name    string
@@ -141,7 +143,7 @@ func TestReconciler_Reconcile(t *testing.T) {
 				extraParams:   tt.fields.extraParams,
 				recorder:      tt.fields.recorder,
 			}
-			got, err := r.Reconcile(tt.args.ctx, tt.args.installation, tt.args.product, tt.args.client, tt.args.in4, tt.args.uninstall)
+			got, err := r.Reconcile(tt.args.ctx, tt.args.installation, tt.args.product, tt.args.client, tt.args.in4, tt.args.uninstall, tt.args.statusChan)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Reconcile() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -376,6 +378,7 @@ func TestReconciler_fullReconcile(t *testing.T) {
 		Product        *integreatlyv1alpha1.RHMIProductStatus
 		Recorder       record.EventRecorder
 		Uninstall      bool
+		StatusChan     chan integreatlyv1alpha1.RHMIProductStatus
 	}{
 		{
 			Name:           "test successful reconcile",
@@ -414,6 +417,7 @@ func TestReconciler_fullReconcile(t *testing.T) {
 			Product:      &integreatlyv1alpha1.RHMIProductStatus{},
 			Recorder:     setupRecorder(),
 			Uninstall:    false,
+			StatusChan:   make(chan integreatlyv1alpha1.RHMIProductStatus, 1),
 		},
 	}
 	for _, tc := range cases {
@@ -422,7 +426,7 @@ func TestReconciler_fullReconcile(t *testing.T) {
 			if err != nil && err.Error() != tc.ExpectedError {
 				t.Fatalf("unexpected error : '%v', expected: '%v'", err, tc.ExpectedError)
 			}
-			status, err := reconciler.Reconcile(context.TODO(), tc.Installation, tc.Product, tc.FakeClient, &quota.ProductConfigMock{}, tc.Uninstall)
+			status, err := reconciler.Reconcile(context.TODO(), tc.Installation, tc.Product, tc.FakeClient, &quota.ProductConfigMock{}, tc.Uninstall, tc.StatusChan)
 			if err != nil && !tc.ExpectError {
 				t.Fatalf("expected no error but got one: %v", err)
 			}
