@@ -3,8 +3,9 @@ package rhssouser
 import (
 	"context"
 	"fmt"
-	olmv1alpha1 "github.com/operator-framework/operator-lifecycle-manager/pkg/api/apis/operators/v1alpha1"
 	"strings"
+
+	olmv1alpha1 "github.com/operator-framework/operator-lifecycle-manager/pkg/api/apis/operators/v1alpha1"
 
 	l "github.com/integr8ly/integreatly-operator/pkg/resources/logger"
 	"github.com/integr8ly/integreatly-operator/pkg/resources/quota"
@@ -51,6 +52,9 @@ var (
 	ssoType                   = "user sso"
 	postgresResourceName      = "rhssouser-postgres-rhmi"
 	routeName                 = "keycloak-edge"
+	// tmp fix
+	failureCounter = 1
+	failuresLimit  = 5
 )
 
 const (
@@ -249,8 +253,16 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 	phase, err = r.reconcileComponents(ctx, installation, serverClient, productConfig)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.Recorder, installation, phase, "Failed to reconcile components", err)
+
+		// tmp fix - extra logs collection
+		connected := r.ConnectToPostgres(r.Config.RHSSOCommon.GetNamespace(), ctx, serverClient)
+		// tmp fix - restarting pod after failuresLimit is reached
+		if strings.Contains(err.Error(), "invalid character") && connected {
+			failureCounter = r.RestartPod(ctx, serverClient, err, r.Config.RHSSOCommon.GetNamespace(), failureCounter, failuresLimit)
+		}
 		return phase, err
 	}
+	failureCounter = 1
 
 	phase, err = r.ReconcileStatefulSet(ctx, serverClient, r.Config.RHSSOCommon)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {

@@ -2,7 +2,9 @@ package rhssocommon
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/Masterminds/semver"
@@ -36,6 +38,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/record"
+	controllerruntime "sigs.k8s.io/controller-runtime"
 	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -778,4 +781,95 @@ func (r *Reconciler) ReconcileCSVEnvVars(csv *olmv1alpha1.ClusterServiceVersion,
 		break // no need to iterate any further
 	}
 	return csv, updated, nil
+}
+
+func (r *Reconciler) ConnectToPostgres(ns string, ctx context.Context, client k8sclient.Client) bool {
+	mtrReconciled, found := os.LookupEnv("MTR_RECONCILED")
+	if mtrReconciled == "true" || found {
+		r.Log.Info("Found MTR_RECONCILED. Disabling connection to rds")
+		return false
+	}
+
+	r.Log.Info("Testing connection to the Postgres rhsso-postgres-rhoam")
+
+	keycloakSec := &corev1.Secret{
+		ObjectMeta: controllerruntime.ObjectMeta{
+			Name:      resources.DatabaseSecretName,
+			Namespace: ns,
+		},
+	}
+	key, err := k8sclient.ObjectKeyFromObject(keycloakSec)
+	if err != nil {
+		r.Log.Error("Error retrieving object key from Keycloak secret: ", err)
+		return false
+	}
+	err = client.Get(ctx, key, keycloakSec)
+	if err != nil {
+		r.Log.Error("Error getting KeyclockSecret: ", err)
+		return false
+	}
+	database := keycloakSec.Data[resources.DatabaseSecretKeyDatabase]
+	port := keycloakSec.Data[resources.DatabaseSecretKeyExtPort]
+	host := keycloakSec.Data[resources.DatabaseSecretKeyExtHost]
+	password := keycloakSec.Data[resources.DatabaseSecretKeyPassword]
+	username := keycloakSec.Data[resources.DatabaseSecretKeyUsername]
+
+	r.Log.Info(fmt.Sprintf("host=%s port=%s user=%s "+
+		"password=%s dbname=%s sslmode=disable",
+		host, port, username, password, database))
+
+	psqlInfo := fmt.Sprintf("host=%s port=%s user=%s "+
+		"password=%s dbname=%s sslmode=disable",
+		host, port, username, password, database)
+	db, err := sql.Open("postgres", psqlInfo)
+	if err != nil {
+		r.Log.Error("Error opening connection: ", err)
+		return false
+	}
+	err = db.Ping()
+	if err != nil {
+		r.Log.Error("Error pinging db: ", err)
+	} else {
+		r.Log.Info("Successfully connected")
+	}
+	err = db.Close()
+	if err != nil {
+		r.Log.Error("Error closing a dummy connection: ", err)
+	} else {
+		r.Log.Info("Closed connection")
+	}
+	return true
+}
+
+// pods will be recreated by the replicaSet. Scaling down replicas isnt efficient - it gets scaled back before all
+// pods entered the "Terminating" state
+func (r *Reconciler) RestartPod(ctx context.Context, client k8sclient.Client, keyckloakErr error, ns string, failureCounter int, failuresLimit int) int {
+	if failureCounter == failuresLimit {
+		r.Log.Warning(fmt.Sprintf("Reached error counter limit of %d, Restarting %s pods", failuresLimit, ns))
+
+		pods := &corev1.PodList{}
+		listOpts := []k8sclient.ListOption{
+			k8sclient.InNamespace(ns),
+			k8sclient.MatchingLabels(map[string]string{
+				"component": "keycloak",
+			}),
+		}
+		err := client.List(ctx, pods, listOpts...)
+		if err != nil {
+			r.Log.Error("Error listing Keycloak pods:", err)
+			return failureCounter
+		}
+
+		for _, pod := range pods.Items {
+			err = client.Delete(ctx, &pod)
+			if err != nil {
+				r.Log.Error(fmt.Sprintf("Error deleting pod %s in namespace %s", pod.Name, pod.Namespace), err)
+			}
+		}
+		failureCounter = 1
+	} else {
+		r.Log.Warning(fmt.Sprintf("Encoutered error: %s. Current failure counter: %d, restarting %s pods when reached count of %d", keyckloakErr, failureCounter, ns, failuresLimit))
+		failureCounter++
+	}
+	return failureCounter
 }

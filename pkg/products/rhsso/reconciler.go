@@ -2,9 +2,7 @@ package rhsso
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
-	"os"
 
 	"strings"
 
@@ -19,7 +17,6 @@ import (
 	olmv1alpha1 "github.com/operator-framework/operator-lifecycle-manager/pkg/api/apis/operators/v1alpha1"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
-	controllerruntime "sigs.k8s.io/controller-runtime"
 
 	integreatlyv1alpha1 "github.com/integr8ly/integreatly-operator/apis/v1alpha1"
 	"github.com/integr8ly/integreatly-operator/pkg/config"
@@ -217,10 +214,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 		events.HandleError(r.Recorder, installation, phase, "Failed to reconcile components", err)
 
 		// tmp fix - extra logs collection
-		connected := r.connectToPostgres(r.Config.RHSSOCommon.GetNamespace(), ctx, serverClient)
+		connected := r.ConnectToPostgres(r.Config.RHSSOCommon.GetNamespace(), ctx, serverClient)
 		// tmp fix - restarting pod after failuresLimit is reached
 		if strings.Contains(err.Error(), "invalid character") && connected {
-			r.restartPod(ctx, serverClient, err, r.Config.RHSSOCommon.GetNamespace())
+			failureCounter = r.RestartPod(ctx, serverClient, err, r.Config.RHSSOCommon.GetNamespace(), failureCounter, failuresLimit)
 		}
 		return phase, err
 	}
@@ -759,94 +756,4 @@ func GetInstanceLabels() map[string]string {
 	return map[string]string{
 		SSOLabelKey: SSOLabelValue,
 	}
-}
-
-func (r *Reconciler) connectToPostgres(ns string, ctx context.Context, client k8sclient.Client) bool {
-	mtrReconciled, found := os.LookupEnv("MTR_RECONCILED")
-	if mtrReconciled == "true" || found {
-		r.Log.Info("Found MTR_RECONCILED. Disabling connection to rds")
-		return false
-	}
-
-	r.Log.Info("Testing connection to the Postgres rhsso-postgres-rhoam")
-
-	keycloakSec := &corev1.Secret{
-		ObjectMeta: controllerruntime.ObjectMeta{
-			Name:      resources.DatabaseSecretName,
-			Namespace: ns,
-		},
-	}
-	key, err := k8sclient.ObjectKeyFromObject(keycloakSec)
-	if err != nil {
-		r.Log.Error("Error retrieving object key from Keycloak secret: ", err)
-		return false
-	}
-	err = client.Get(ctx, key, keycloakSec)
-	if err != nil {
-		r.Log.Error("Error getting KeyclockSecret: ", err)
-		return false
-	}
-	database := keycloakSec.Data[resources.DatabaseSecretKeyDatabase]
-	port := keycloakSec.Data[resources.DatabaseSecretKeyExtPort]
-	host := keycloakSec.Data[resources.DatabaseSecretKeyExtHost]
-	password := keycloakSec.Data[resources.DatabaseSecretKeyPassword]
-	username := keycloakSec.Data[resources.DatabaseSecretKeyUsername]
-
-	r.Log.Info(fmt.Sprintf("host=%s port=%s user=%s "+
-		"password=%s dbname=%s sslmode=disable",
-		host, port, username, password, database))
-
-	psqlInfo := fmt.Sprintf("host=%s port=%s user=%s "+
-		"password=%s dbname=%s sslmode=disable",
-		host, port, username, password, database)
-	db, err := sql.Open("postgres", psqlInfo)
-	if err != nil {
-		r.Log.Error("Error opening connection: ", err)
-		return false
-	}
-	err = db.Ping()
-	if err != nil {
-		r.Log.Error("Error pinging db: ", err)
-	} else {
-		r.Log.Info("Successfully connected")
-	}
-	err = db.Close()
-	if err != nil {
-		r.Log.Error("Error closing a dummy connection: ", err)
-	} else {
-		r.Log.Info("Closed connection")
-	}
-	return true
-}
-
-// pods will be recreated by the replicaSet. Scaling down replicas isnt efficient - it gets scaled back before all
-// pods entered the "Terminating" state
-func (r *Reconciler) restartPod(ctx context.Context, client k8sclient.Client, keyckloakErr error, ns string) {
-	if failureCounter == failuresLimit {
-		r.Log.Warning(fmt.Sprintf("Reached error counter limit of %d, Restarting %s pods", failuresLimit, ns))
-
-		pods := &corev1.PodList{}
-		listOpts := []k8sclient.ListOption{
-			k8sclient.InNamespace(ns),
-			k8sclient.MatchingLabels(map[string]string{
-				"component": "keycloak",
-			}),
-		}
-		err := client.List(ctx, pods, listOpts...)
-		if err != nil {
-			r.Log.Error("Error listing Keycloak pods:", err)
-			return
-		}
-
-		for _, pod := range pods.Items {
-			err = client.Delete(ctx, &pod)
-			if err != nil {
-				r.Log.Error(fmt.Sprintf("Error deleting pod %s in namespace %s", pod.Name, pod.Namespace), err)
-			}
-		}
-		failureCounter = 1
-	} else {
-		r.Log.Warning(fmt.Sprintf("Encoutered error: %s. Current failure counter: %d, restarting %s pods when reached count of %d", keyckloakErr, failureCounter, ns, failuresLimit))
-	}
-	failureCounter++
 }
