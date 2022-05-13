@@ -741,18 +741,27 @@ func (r *RHMIReconciler) handleUninstall(installation *rhmiv1alpha1.RHMI, instal
 		if stage.Name == rhmiv1alpha1.BootstrapStage {
 			pendingUninstalls = r.handleUninstallBootstrap(installation, finalizers, stage, configManager, merr, request)
 		} else {
-			statusChan := make(chan rhmiv1alpha1.RHMIProductStatus, len(stage.Products))
+			statusChan := make(chan rhmiv1alpha1.RHMIProductStatus, len(stage.Products)*2)
 			for product := range stage.Products {
+				log.Infof("len(stage.Products), len(statusChan)", l.Fields{"len(stage.Products)": len(stage.Products), "len(statusChan)": len(statusChan), "len(finalizers)": len(finalizers)})
+				log.Infof("handleUninstallProduct", l.Fields{"productName": product})
 				productPending := r.handleUninstallProduct(installation, product, stage, finalizers, configManager, merr, statusChan)
+				log.Infof("postHandleUninstallProduct", l.Fields{"productName": product})
 				if productPending && !pendingUninstalls {
 					pendingUninstalls = true
 				}
 			}
 
-			for range stage.Products {
-				logrus.Info("Retrieving results from chan")
-				status := <-statusChan
-				logrus.Infof("Status retrieved: %+v", status)
+			log.Info("Uninstall, after product loop")
+			for productName := range stage.Products {
+				// log.Infof("Uninstall: productName -", l.Fields{"productName": productName, "finalizers": finalizers})
+				for _, productFinalizer := range finalizers {
+					if strings.Contains(productFinalizer, string(productName)) {
+						logrus.Info("Uninstall: Retrieving results from chan")
+						status := <-statusChan
+						logrus.Infof("Uninstall: Status retrieved: %+v", status)
+					}
+				}
 			}
 		}
 		//don't move to next stage until all products in this stage are removed
@@ -840,7 +849,8 @@ func (r *RHMIReconciler) handleUninstallProduct(installation *rhmiv1alpha1.RHMI,
 		if productStatus.Uninstall || installation.DeletionTimestamp != nil {
 			uninstall = true
 		}
-		phase, err := reconciler.Reconcile(context.TODO(), installation, productStatus, serverClient, quota.QuotaProductConfig{}, uninstall, statusChan)
+		log.Infof("Reconcile:", l.Fields{"productName": productName})
+		phase, err := reconciler.Reconcile(context.TODO(), installation, *productStatus, serverClient, quota.QuotaProductConfig{}, uninstall, statusChan)
 		if err != nil {
 			merr.Add(fmt.Errorf("Failed to reconcile product %s: %w", productName, err))
 		}
@@ -1141,22 +1151,20 @@ func (r *RHMIReconciler) processStage(installation *rhmiv1alpha1.RHMI, stage *St
 		if productStatus.Uninstall || installation.DeletionTimestamp != nil {
 			uninstall = true
 		}
-		productStatus.Phase, err = reconciler.Reconcile(context.TODO(), installation, &productStatus, serverClient, quotaconfig.GetProduct(productName), uninstall, statusChan)
+		go reconciler.Reconcile(context.TODO(), installation, productStatus, serverClient, quotaconfig.GetProduct(productName), uninstall, statusChan)
+	}
 
-		if err != nil {
-			if mErr == nil {
-				mErr = &resources.MultiErr{}
-			}
-			mErr.(*resources.MultiErr).Add(fmt.Errorf("failed installation of %s: %w", productStatus.Name, err))
-		}
+	for range stage.Products {
+		logrus.Info("Reconcile: Retrieving results from chan")
+		status := <-statusChan
 
 		// Verify that watches for this productStatus CRDs have been created
-		config, err := configManager.ReadProduct(productStatus.Name)
+		config, err := configManager.ReadProduct(status.Name)
 		if err != nil {
-			return rhmiv1alpha1.PhaseFailed, fmt.Errorf("failed to read productStatus config for %s: %v", string(productStatus.Name), err)
+			return rhmiv1alpha1.PhaseFailed, fmt.Errorf("failed to read productStatus config for %s: %v", string(status.Name), err)
 		}
 
-		if productStatus.Phase == rhmiv1alpha1.PhaseCompleted {
+		if status.Phase == rhmiv1alpha1.PhaseCompleted {
 			for _, crd := range config.GetWatchableCRDs() {
 				namespace := config.GetNamespace()
 				gvk := crd.GetObjectKind().GroupVersionKind().String()
@@ -1166,27 +1174,21 @@ func (r *RHMIReconciler) processStage(installation *rhmiv1alpha1.RHMI, stage *St
 				if r.customInformers[gvk][config.GetNamespace()] == nil {
 					err = r.addCustomInformer(crd, namespace)
 					if err != nil {
-						return rhmiv1alpha1.PhaseFailed, fmt.Errorf("failed to create a %s CRD watch for %s: %v", gvk, string(productStatus.Name), err)
+						return rhmiv1alpha1.PhaseFailed, fmt.Errorf("failed to create a %s CRD watch for %s: %v", gvk, string(status.Name), err)
 					}
 				} else if !(*r.customInformers[gvk][config.GetNamespace()]).HasSynced() {
-					return rhmiv1alpha1.PhaseFailed, fmt.Errorf("a %s CRD Informer for %s has not synced", gvk, string(productStatus.Name))
+					return rhmiv1alpha1.PhaseFailed, fmt.Errorf("a %s CRD Informer for %s has not synced", gvk, string(status.Name))
 				}
 			}
 		}
 
 		//found an incomplete productStatus
-		if productStatus.Phase != rhmiv1alpha1.PhaseCompleted {
+		if status.Phase != rhmiv1alpha1.PhaseCompleted {
 			incompleteStage = true
 		}
-		productsAux[productStatus.Name] = productStatus
+		productsAux[status.Name] = status
 		*stage = Stage{Name: stage.Name, Products: productsAux}
-	}
-
-	// TODO: gather results from all go routines
-	for range stage.Products {
-		logrus.Info("Retrieving results from chan")
-		status := <-statusChan
-		logrus.Infof("Status retrieved: %+v", status)
+		logrus.Infof("Reconcile: Status retrieved: %+v", status)
 	}
 
 	//some products in this stage have not installed successfully yet
