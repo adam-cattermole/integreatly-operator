@@ -143,7 +143,7 @@ func TestReconciler_Reconcile(t *testing.T) {
 				extraParams:   tt.fields.extraParams,
 				recorder:      tt.fields.recorder,
 			}
-			got, err := r.Reconcile(tt.args.ctx, tt.args.installation, tt.args.product, tt.args.client, tt.args.in4, tt.args.uninstall, tt.args.statusChan)
+			got, err := r.Reconcile(tt.args.ctx, tt.args.installation, *tt.args.product, tt.args.client, tt.args.in4, tt.args.uninstall, tt.args.statusChan)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Reconcile() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -426,7 +426,7 @@ func TestReconciler_fullReconcile(t *testing.T) {
 			if err != nil && err.Error() != tc.ExpectedError {
 				t.Fatalf("unexpected error : '%v', expected: '%v'", err, tc.ExpectedError)
 			}
-			status, err := reconciler.Reconcile(context.TODO(), tc.Installation, tc.Product, tc.FakeClient, &quota.ProductConfigMock{}, tc.Uninstall, tc.StatusChan)
+			status, err := reconciler.Reconcile(context.TODO(), tc.Installation, *tc.Product, tc.FakeClient, &quota.ProductConfigMock{}, tc.Uninstall, tc.StatusChan)
 			if err != nil && !tc.ExpectError {
 				t.Fatalf("expected no error but got one: %v", err)
 			}

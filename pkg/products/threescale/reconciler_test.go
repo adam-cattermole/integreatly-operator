@@ -192,7 +192,7 @@ func TestThreeScale(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Error creating new reconciler %s: %v", constants.ThreeScaleSubscriptionName, err)
 			}
-			status, err := tsReconciler.Reconcile(ctx, scenario.Installation, scenario.Product, scenario.FakeSigsClient, &quota.ProductConfigMock{}, scenario.Uninstall, scenario.StatusChan)
+			status, err := tsReconciler.Reconcile(ctx, scenario.Installation, *scenario.Product, scenario.FakeSigsClient, &quota.ProductConfigMock{}, scenario.Uninstall, scenario.StatusChan)
 			if err != nil {
 				t.Fatalf("Error reconciling %s: %v", constants.ThreeScaleSubscriptionName, err)
 			}

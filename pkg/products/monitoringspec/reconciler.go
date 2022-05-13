@@ -101,7 +101,7 @@ func NewReconciler(configManager config.ConfigReadWriter, installation *integrea
 
 // Reconcile method for monitorspec
 func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1alpha1.RHMI,
-	productStatus *integreatlyv1alpha1.RHMIProductStatus, serverClient k8sclient.Client, _ quota.ProductConfig, uninstall bool, _ chan integreatlyv1alpha1.RHMIProductStatus) (integreatlyv1alpha1.StatusPhase, error) {
+	productStatus integreatlyv1alpha1.RHMIProductStatus, serverClient k8sclient.Client, _ quota.ProductConfig, uninstall bool, _ chan integreatlyv1alpha1.RHMIProductStatus) (integreatlyv1alpha1.StatusPhase, error) {
 	phase, err := r.ReconcileFinalizer(ctx, serverClient, installation, string(r.Config.GetProductName()), uninstall,
 		func() (integreatlyv1alpha1.StatusPhase, error) {
 			r.Log.Info("Phase: Monitoringspec ReconcileFinalizer")

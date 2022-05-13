@@ -25,7 +25,7 @@ var _ Interface = &InterfaceMock{}
 // 			GetPreflightObjectFunc: func(ns string) runtime.Object {
 // 				panic("mock out the GetPreflightObject method")
 // 			},
-// 			ReconcileFunc: func(ctx context.Context, installation *integreatlyv1alpha1.RHMI, product *integreatlyv1alpha1.RHMIProductStatus, serverClient k8sclient.Client, productConfig quota.ProductConfig, uninstall bool, statusChan chan integreatlyv1alpha1.RHMIProductStatus) (integreatlyv1alpha1.StatusPhase, error) {
+// 			ReconcileFunc: func(ctx context.Context, installation *integreatlyv1alpha1.RHMI, product integreatlyv1alpha1.RHMIProductStatus, serverClient k8sclient.Client, productConfig quota.ProductConfig, uninstall bool, statusChan chan integreatlyv1alpha1.RHMIProductStatus) (integreatlyv1alpha1.StatusPhase, error) {
 // 				panic("mock out the Reconcile method")
 // 			},
 // 			VerifyVersionFunc: func(installation *integreatlyv1alpha1.RHMI) bool {
@@ -42,7 +42,7 @@ type InterfaceMock struct {
 	GetPreflightObjectFunc func(ns string) runtime.Object
 
 	// ReconcileFunc mocks the Reconcile method.
-	ReconcileFunc func(ctx context.Context, installation *integreatlyv1alpha1.RHMI, product *integreatlyv1alpha1.RHMIProductStatus, serverClient k8sclient.Client, productConfig quota.ProductConfig, uninstall bool, statusChan chan integreatlyv1alpha1.RHMIProductStatus) (integreatlyv1alpha1.StatusPhase, error)
+	ReconcileFunc func(ctx context.Context, installation *integreatlyv1alpha1.RHMI, product integreatlyv1alpha1.RHMIProductStatus, serverClient k8sclient.Client, productConfig quota.ProductConfig, uninstall bool, statusChan chan integreatlyv1alpha1.RHMIProductStatus) (integreatlyv1alpha1.StatusPhase, error)
 
 	// VerifyVersionFunc mocks the VerifyVersion method.
 	VerifyVersionFunc func(installation *integreatlyv1alpha1.RHMI) bool
@@ -61,7 +61,7 @@ type InterfaceMock struct {
 			// Installation is the installation argument value.
 			Installation *integreatlyv1alpha1.RHMI
 			// Product is the product argument value.
-			Product *integreatlyv1alpha1.RHMIProductStatus
+			Product integreatlyv1alpha1.RHMIProductStatus
 			// ServerClient is the serverClient argument value.
 			ServerClient k8sclient.Client
 			// ProductConfig is the productConfig argument value.
@@ -114,14 +114,14 @@ func (mock *InterfaceMock) GetPreflightObjectCalls() []struct {
 }
 
 // Reconcile calls ReconcileFunc.
-func (mock *InterfaceMock) Reconcile(ctx context.Context, installation *integreatlyv1alpha1.RHMI, product *integreatlyv1alpha1.RHMIProductStatus, serverClient k8sclient.Client, productConfig quota.ProductConfig, uninstall bool, statusChan chan integreatlyv1alpha1.RHMIProductStatus) (integreatlyv1alpha1.StatusPhase, error) {
+func (mock *InterfaceMock) Reconcile(ctx context.Context, installation *integreatlyv1alpha1.RHMI, product integreatlyv1alpha1.RHMIProductStatus, serverClient k8sclient.Client, productConfig quota.ProductConfig, uninstall bool, statusChan chan integreatlyv1alpha1.RHMIProductStatus) (integreatlyv1alpha1.StatusPhase, error) {
 	if mock.ReconcileFunc == nil {
 		panic("InterfaceMock.ReconcileFunc: method is nil but Interface.Reconcile was just called")
 	}
 	callInfo := struct {
 		Ctx           context.Context
 		Installation  *integreatlyv1alpha1.RHMI
-		Product       *integreatlyv1alpha1.RHMIProductStatus
+		Product       integreatlyv1alpha1.RHMIProductStatus
 		ServerClient  k8sclient.Client
 		ProductConfig quota.ProductConfig
 		Uninstall     bool
@@ -147,7 +147,7 @@ func (mock *InterfaceMock) Reconcile(ctx context.Context, installation *integrea
 func (mock *InterfaceMock) ReconcileCalls() []struct {
 	Ctx           context.Context
 	Installation  *integreatlyv1alpha1.RHMI
-	Product       *integreatlyv1alpha1.RHMIProductStatus
+	Product       integreatlyv1alpha1.RHMIProductStatus
 	ServerClient  k8sclient.Client
 	ProductConfig quota.ProductConfig
 	Uninstall     bool
@@ -156,7 +156,7 @@ func (mock *InterfaceMock) ReconcileCalls() []struct {
 	var calls []struct {
 		Ctx           context.Context
 		Installation  *integreatlyv1alpha1.RHMI
-		Product       *integreatlyv1alpha1.RHMIProductStatus
+		Product       integreatlyv1alpha1.RHMIProductStatus
 		ServerClient  k8sclient.Client
 		ProductConfig quota.ProductConfig
 		Uninstall     bool

@@ -127,7 +127,7 @@ func (r *Reconciler) EmitPhase(phase integreatlyv1alpha1.StatusPhase, productSta
 	return phase
 }
 
-func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1alpha1.RHMI, productStatus *integreatlyv1alpha1.RHMIProductStatus, client k8sclient.Client, _ quota.ProductConfig, uninstall bool, statusChan chan integreatlyv1alpha1.RHMIProductStatus) (integreatlyv1alpha1.StatusPhase, error) {
+func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1alpha1.RHMI, productStatus integreatlyv1alpha1.RHMIProductStatus, client k8sclient.Client, _ quota.ProductConfig, uninstall bool, statusChan chan integreatlyv1alpha1.RHMIProductStatus) (integreatlyv1alpha1.StatusPhase, error) {
 
 	r.log.Info("Start Observability reconcile")
 
@@ -142,13 +142,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 			phase, err := r.deleteObservabilityCR(ctx, client, installation, productNamespace)
 			if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 				// return phase, err
-				return r.EmitPhase(phase, productStatus, statusChan), err
+				return r.EmitPhase(phase, &productStatus, statusChan), err
 			}
 
 			phase, err = resources.RemoveNamespace(ctx, installation, client, productNamespace, r.log)
 			if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 				// return phase, err
-				return r.EmitPhase(phase, productStatus, statusChan), err
+				return r.EmitPhase(phase, &productStatus, statusChan), err
 			}
 		}
 		// Check if operatorNamespace is still present before trying to delete it resources
@@ -157,14 +157,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 			phase, err := resources.RemoveNamespace(ctx, installation, client, operatorNamespace, r.log)
 			if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 				// return phase, err
-				return r.EmitPhase(phase, productStatus, statusChan), err
+				return r.EmitPhase(phase, &productStatus, statusChan), err
 			}
 		}
 		// Delete ClusterRole and ClusterRoleBinding that were created for the blackbox exporter
 		err = r.removeRoleandRoleBindingForBlackbox(ctx, client)
 		if err != nil {
 			// return integreatlyv1alpha1.PhaseFailed, err
-			return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, productStatus, statusChan), err
+			return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, &productStatus, statusChan), err
 		}
 
 		// If both namespaces are deleted, return complete
@@ -172,47 +172,47 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 		_, productNSErr := resources.GetNS(ctx, productNamespace, client)
 		if k8serr.IsNotFound(operatorNSErr) && k8serr.IsNotFound(productNSErr) {
 			// return integreatlyv1alpha1.PhaseCompleted, nil
-			return r.EmitPhase(integreatlyv1alpha1.PhaseCompleted, productStatus, statusChan), nil
+			return r.EmitPhase(integreatlyv1alpha1.PhaseCompleted, &productStatus, statusChan), nil
 		}
 		// return integreatlyv1alpha1.PhaseInProgress, nil
-		return r.EmitPhase(integreatlyv1alpha1.PhaseInProgress, productStatus, statusChan), nil
+		return r.EmitPhase(integreatlyv1alpha1.PhaseInProgress, &productStatus, statusChan), nil
 	}, r.log)
 	if err != nil || phase == integreatlyv1alpha1.PhaseFailed {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile finalizer", err)
 		// return phase, err
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	if uninstall {
 		// return phase, nil
-		return r.EmitPhase(phase, productStatus, statusChan), nil
+		return r.EmitPhase(phase, &productStatus, statusChan), nil
 	}
 
 	phase, err = r.ReconcileNamespace(ctx, operatorNamespace, installation, client, r.log)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, fmt.Sprintf("Failed to reconcile %s ns", operatorNamespace), err)
 		// return phase, err
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	phase, err = r.ReconcileNamespace(ctx, productNamespace, installation, client, r.log)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, fmt.Sprintf("Failed to reconcile %s ns", productNamespace), err)
 		// return phase, err
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	phase, err = r.reconcileConfigMap(ctx, client)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, fmt.Sprintf("Failed to reconcile %s configmap which is required to disable observability operator initilisting it's own cr", configMapNoInit), err)
 		// return phase, err
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	monitoringConfg, err := r.ConfigManager.ReadMonitoring()
 	if err != nil {
 		// return integreatlyv1alpha1.PhaseFailed, err
-		return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, productStatus, statusChan), err
+		return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, &productStatus, statusChan), err
 	}
 
 	r.log.Info("check AMO is uninstalled before progressing with Observability Installation")
@@ -229,21 +229,21 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile blackbox exporter", err)
 		// return phase, err
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	phase, err = r.reconcileSubscription(ctx, client, productNamespace, operatorNamespace)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, fmt.Sprintf("Failed to reconcile %s subscription", constants.ObservabilitySubscriptionName), err)
 		// return phase, err
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	phase, err = r.reconcileComponents(ctx, client, productNamespace, r.installation.Spec.NamespacePrefix)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to create components", err)
 		// return phase, err
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	phase, err = monitoringcommon.ReconcileAlertManagerSecrets(ctx, client, r.installation, r.Config.GetNamespace(), r.Config.GetAlertManagerRouteName())
@@ -254,7 +254,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 		}
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile alert manager config secret", err)
 		// return phase, err
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	if string(r.Config.GetProductVersion()) != string(integreatlyv1alpha1.VersionObservability) {
@@ -262,7 +262,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 		err := r.ConfigManager.WriteConfig(r.Config)
 		if err != nil {
 			// return integreatlyv1alpha1.PhaseFailed, err
-			return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, productStatus, statusChan), err
+			return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, &productStatus, statusChan), err
 		}
 	}
 
@@ -274,7 +274,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 		}
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile dashboards", err)
 		// return phase, err
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	phase, err = r.newAlertsReconciler(r.log, r.installation.Spec.Type).ReconcileAlerts(ctx, client)
@@ -282,7 +282,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile alerts", err)
 		// return phase, err
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	// creates an alert to check for the presents of sendgrid smtp secret
@@ -291,7 +291,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile SendgridSmtpSecretExists alert", err)
 		// return phase, err
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	// creates an alert to check for the presents of DeadMansSnitch secret
@@ -300,7 +300,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile DeadMansSnitchSecretExists alert", err)
 		// return phase, err
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	phase, err = r.reconcileMonitoring(ctx, client)
@@ -311,7 +311,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 			events.HandleError(r.recorder, installation, phase, "Failed to reconcile: ", err)
 		}
 		// return phase, err
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	productStatus.Version = r.Config.GetProductVersion()
@@ -320,7 +320,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 	events.HandleProductComplete(r.recorder, installation, integreatlyv1alpha1.ProductsStage, r.Config.GetProductName())
 	r.log.Info("Reconciled successfully")
 	// return integreatlyv1alpha1.PhaseCompleted, nil
-	return r.EmitPhase(integreatlyv1alpha1.PhaseCompleted, productStatus, statusChan), nil
+	return r.EmitPhase(integreatlyv1alpha1.PhaseCompleted, &productStatus, statusChan), nil
 }
 
 func CreatePrometheusProbe(ctx context.Context, client k8sclient.Client, inst *integreatlyv1alpha1.RHMI, cfg *config.Observability, name string, module string, targets prometheus.ProbeTargetStaticConfig) (integreatlyv1alpha1.StatusPhase, error) {

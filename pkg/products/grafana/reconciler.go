@@ -109,7 +109,7 @@ func (r *Reconciler) EmitPhase(phase integreatlyv1alpha1.StatusPhase, productSta
 	return phase
 }
 
-func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1alpha1.RHMI, productStatus *integreatlyv1alpha1.RHMIProductStatus, client k8sclient.Client, productConfig quota.ProductConfig, uninstall bool, statusChan chan integreatlyv1alpha1.RHMIProductStatus) (integreatlyv1alpha1.StatusPhase, error) {
+func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1alpha1.RHMI, productStatus integreatlyv1alpha1.RHMIProductStatus, client k8sclient.Client, productConfig quota.ProductConfig, uninstall bool, statusChan chan integreatlyv1alpha1.RHMIProductStatus) (integreatlyv1alpha1.StatusPhase, error) {
 	r.log.Info("Start Grafana reconcile")
 
 	operatorNamespace := r.Config.GetOperatorNamespace()
@@ -118,45 +118,45 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 	phase, err := r.ReconcileFinalizer(ctx, client, installation, string(r.Config.GetProductName()), uninstall, func() (integreatlyv1alpha1.StatusPhase, error) {
 		phase, err := resources.RemoveNamespace(ctx, installation, client, productNamespace, r.log)
 		if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
-			return r.EmitPhase(phase, productStatus, statusChan), err
+			return r.EmitPhase(phase, &productStatus, statusChan), err
 		}
 
 		phase, err = resources.RemoveNamespace(ctx, installation, client, operatorNamespace, r.log)
 		if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
-			return r.EmitPhase(phase, productStatus, statusChan), err
+			return r.EmitPhase(phase, &productStatus, statusChan), err
 		}
 
 		if err := r.deleteConsoleLink(ctx, client); err != nil {
-			return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, productStatus, statusChan), err
+			return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, &productStatus, statusChan), err
 		}
 
-		return r.EmitPhase(integreatlyv1alpha1.PhaseCompleted, productStatus, statusChan), nil
+		return r.EmitPhase(integreatlyv1alpha1.PhaseCompleted, &productStatus, statusChan), nil
 	}, r.log)
 	if err != nil || phase == integreatlyv1alpha1.PhaseFailed {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile finalizer", err)
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	if uninstall {
-		return r.EmitPhase(phase, productStatus, statusChan), nil
+		return r.EmitPhase(phase, &productStatus, statusChan), nil
 	}
 
 	phase, err = r.ReconcileNamespace(ctx, operatorNamespace, installation, client, r.log)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, fmt.Sprintf("Failed to reconcile %s ns", operatorNamespace), err)
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	phase, err = r.reconcileSecrets(ctx, client, installation)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, fmt.Sprintf("Failed to reconcile %s ns", productNamespace), err)
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	phase, err = r.reconcileSubscription(ctx, client, installation, productNamespace, operatorNamespace)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, fmt.Sprintf("Failed to reconcile %s subscription", constants.GrafanaSubscriptionName), err)
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	// Restarts the grafana-operator-controller-manager
@@ -165,19 +165,19 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 	phase, err = r.restartGrafanaOperatorControllerManagerDeployment(ctx, client, operatorNamespace)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to scale grafana-operator-controller-manager Deployment", err)
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	phase, err = r.reconcileComponents(ctx, client)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to create components", err)
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	phase, err = r.reconcileHost(ctx, client)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile host", err)
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 	rateLimit := productConfig.GetRateLimitConfig()
 	activeQuota := productConfig.GetActiveQuota()
@@ -185,34 +185,34 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 	phase, err = r.reconcileGrafanaDashboards(ctx, client, rateLimitDashBoardName, rateLimit, activeQuota)
 	if err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile grafana dashboard", err)
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	if string(r.Config.GetProductVersion()) != string(integreatlyv1alpha1.VersionGrafana) {
 		r.Config.SetProductVersion(string(integreatlyv1alpha1.VersionGrafana))
 		if err := r.ConfigManager.WriteConfig(r.Config); err != nil {
-			return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, productStatus, statusChan), fmt.Errorf("error writing grafana config : %w", err)
+			return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, &productStatus, statusChan), fmt.Errorf("error writing grafana config : %w", err)
 		}
 	}
 
 	alertsReconciler := r.newAlertReconciler(r.log, r.installation.Spec.Type)
 	if phase, err := alertsReconciler.ReconcileAlerts(ctx, client); err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile grafana alerts", err)
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	if err := r.reconcileConsoleLink(ctx, client); err != nil {
-		return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, productStatus, statusChan), err
+		return r.EmitPhase(integreatlyv1alpha1.PhaseFailed, &productStatus, statusChan), err
 	}
 
 	if phase, err = r.reconcileBlackboxTargets(ctx, client); err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile grafana blackbox targets", err)
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	if phase, err = r.reconcilePrometheusProbes(ctx, client); err != nil || phase != integreatlyv1alpha1.PhaseCompleted {
 		events.HandleError(r.recorder, installation, phase, "Failed to reconcile prometheus probes", err)
-		return r.EmitPhase(phase, productStatus, statusChan), err
+		return r.EmitPhase(phase, &productStatus, statusChan), err
 	}
 
 	productStatus.Host = r.Config.GetHost()
@@ -221,7 +221,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, installation *integreatlyv1a
 
 	events.HandleProductComplete(r.recorder, installation, integreatlyv1alpha1.ProductsStage, r.Config.GetProductName())
 	r.log.Info("Reconciled successfully")
-	return r.EmitPhase(integreatlyv1alpha1.PhaseCompleted, productStatus, statusChan), nil
+	return r.EmitPhase(integreatlyv1alpha1.PhaseCompleted, &productStatus, statusChan), nil
 }
 
 func (r *Reconciler) reconcileSecrets(ctx context.Context, client k8sclient.Client, installation *integreatlyv1alpha1.RHMI) (integreatlyv1alpha1.StatusPhase, error) {

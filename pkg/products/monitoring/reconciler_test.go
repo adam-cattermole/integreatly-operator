@@ -494,7 +494,7 @@ func TestReconciler_fullReconcile(t *testing.T) {
 				t.Fatalf("unexpected error : '%v', expected: '%v'", err, tc.ExpectedError)
 			}
 
-			status, err := reconciler.Reconcile(context.TODO(), tc.Installation, tc.Product, tc.FakeClient, &quota.ProductConfigMock{}, tc.Uninstall, nil)
+			status, err := reconciler.Reconcile(context.TODO(), tc.Installation, *tc.Product, tc.FakeClient, &quota.ProductConfigMock{}, tc.Uninstall, nil)
 			if err != nil && !tc.ExpectError {
 				t.Fatalf("expected no error but got one: %v", err)
 			}
@@ -576,6 +576,7 @@ func TestReconciler_testPhases(t *testing.T) {
 			Installation:   basicInstallation(),
 			FakeClient:     moqclient.NewSigsClientMoqWithScheme(scheme, basicInstallation()),
 			FakeConfig:     basicConfigMock(),
+			ProductStatus:  &integreatlyv1alpha1.RHMIProductStatus{},
 			Recorder:       setupRecorder(),
 			Uninstall:      true,
 			ExpectedStatus: integreatlyv1alpha1.PhaseCompleted,
@@ -587,6 +588,7 @@ func TestReconciler_testPhases(t *testing.T) {
 			}),
 			FakeClient:     moqclient.NewSigsClientMoqWithScheme(scheme, basicInstallation()),
 			FakeConfig:     basicConfigMock(),
+			ProductStatus:  &integreatlyv1alpha1.RHMIProductStatus{},
 			Recorder:       setupRecorder(),
 			Uninstall:      true,
 			ExpectedStatus: integreatlyv1alpha1.PhaseCompleted,
@@ -600,6 +602,7 @@ func TestReconciler_testPhases(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: defaultMonitoringName, Namespace: operatorNS.Name},
 			}),
 			FakeConfig:     basicConfigMock(),
+			ProductStatus:  &integreatlyv1alpha1.RHMIProductStatus{},
 			Recorder:       setupRecorder(),
 			Uninstall:      true,
 			ExpectedStatus: integreatlyv1alpha1.PhaseInProgress,
@@ -611,6 +614,7 @@ func TestReconciler_testPhases(t *testing.T) {
 			}),
 			FakeClient:     moqclient.NewSigsClientMoqWithScheme(scheme, basicInstallation(), ns, federationNs, operatorNS),
 			FakeConfig:     basicConfigMock(),
+			ProductStatus:  &integreatlyv1alpha1.RHMIProductStatus{},
 			Recorder:       setupRecorder(),
 			Uninstall:      true,
 			ExpectedStatus: integreatlyv1alpha1.PhaseInProgress,
@@ -630,6 +634,7 @@ func TestReconciler_testPhases(t *testing.T) {
 				},
 			}),
 			FakeConfig:     basicConfigMock(),
+			ProductStatus:  &integreatlyv1alpha1.RHMIProductStatus{},
 			Recorder:       setupRecorder(),
 			Uninstall:      true,
 			ExpectedStatus: integreatlyv1alpha1.PhaseInProgress,
@@ -712,7 +717,7 @@ func TestReconciler_testPhases(t *testing.T) {
 				t.Fatalf("unexpected error : '%v'", err)
 			}
 
-			status, err := reconciler.Reconcile(context.TODO(), tc.Installation, tc.ProductStatus, tc.FakeClient, &quota.ProductConfigMock{}, tc.Uninstall, nil)
+			status, err := reconciler.Reconcile(context.TODO(), tc.Installation, *tc.ProductStatus, tc.FakeClient, &quota.ProductConfigMock{}, tc.Uninstall, nil)
 			if err != nil {
 				t.Fatalf("expected no error but got one: %v", err)
 			}

@@ -136,7 +136,7 @@ func TestDataSync(t *testing.T) {
 				return
 			}
 
-			status, err := testReconciler.Reconcile(context.TODO(), tc.Installation, tc.Product, tc.FakeClient, &quota.ProductConfigMock{}, tc.Uninstall, nil)
+			status, err := testReconciler.Reconcile(context.TODO(), tc.Installation, *tc.Product, tc.FakeClient, &quota.ProductConfigMock{}, tc.Uninstall, nil)
 			if err != nil && !tc.ExpectError {
 				t.Fatalf("expected error but got one: %v", err)
 			}

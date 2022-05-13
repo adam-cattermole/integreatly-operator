@@ -200,7 +200,7 @@ func TestSolutionExplorer(t *testing.T) {
 				return
 			}
 
-			status, err := reconciler.Reconcile(context.TODO(), tc.Installation, tc.Product, tc.client, &quota.ProductConfigMock{}, tc.Uninstall, nil)
+			status, err := reconciler.Reconcile(context.TODO(), tc.Installation, *tc.Product, tc.client, &quota.ProductConfigMock{}, tc.Uninstall, nil)
 			if err != nil && !tc.ExpectErr {
 				t.Fatalf("expected error but got one: %v", err)
 			}
