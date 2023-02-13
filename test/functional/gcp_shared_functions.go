@@ -3,7 +3,12 @@ package functional
 //some functions below were taken from CRO
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
+	"net/url"
+	"strings"
+
 	crov1 "github.com/integr8ly/cloud-resource-operator/apis/integreatly/v1alpha1"
 	croTypes "github.com/integr8ly/cloud-resource-operator/apis/integreatly/v1alpha1/types"
 	croResources "github.com/integr8ly/cloud-resource-operator/pkg/resources"
@@ -11,11 +16,9 @@ import (
 	"github.com/integr8ly/integreatly-operator/pkg/resources/constants"
 	"github.com/integr8ly/integreatly-operator/test/common"
 	computepb "google.golang.org/genproto/googleapis/cloud/compute/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"net"
-	"net/url"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"strings"
+	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -23,9 +26,10 @@ const (
 	defaultIpRangeCIDRMask         = 22
 	managedLabelKey                = "red-hat-managed"
 	managedLabelValue              = "true"
+	gcpCredsSecretName             = "cloud-resource-gcp-credentials"
 )
 
-func GetPostgresSqlInstancesIDsListFromCR(ctx context.Context, client client.Client, rhmi *integreatlyv1alpha1.RHMI) ([]string, []string) {
+func GetPostgresSqlInstancesIDsListFromCR(ctx context.Context, client k8sclient.Client, rhmi *integreatlyv1alpha1.RHMI) ([]string, []string) {
 	var foundErrors []string
 	var foundResourceIDs []string
 
@@ -113,4 +117,16 @@ func parseSubnetUrl(subnetUrl string) (string, string, error) {
 		return "", "", fmt.Errorf("failed to retrieve subnetwork name from URL")
 	}
 	return name, region, nil
+}
+
+func getGCPCredentials(ctx context.Context, client k8sclient.Client) ([]byte, error) {
+	secret := &corev1.Secret{}
+	if err := client.Get(ctx, types.NamespacedName{Name: gcpCredsSecretName, Namespace: common.RHOAMOperatorNamespace}, secret); err != nil {
+		return nil, fmt.Errorf("failed getting secret %s from ns %s: %w", gcpCredsSecretName, common.RHOAMOperatorNamespace, err)
+	}
+	serviceAccountJson := secret.Data["service_account.json"]
+	if len(serviceAccountJson) == 0 {
+		return nil, errors.New("gcp credentials secret can't be empty")
+	}
+	return serviceAccountJson, nil
 }

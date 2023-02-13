@@ -1,14 +1,16 @@
 package functional
 
 import (
-	redis "cloud.google.com/go/redis/apiv1"
 	"context"
 	"fmt"
+
+	redis "cloud.google.com/go/redis/apiv1"
 	croResources "github.com/integr8ly/cloud-resource-operator/pkg/resources"
 	"github.com/integr8ly/integreatly-operator/test/common"
-	"google.golang.org/api/iterator"
-	//redispb "cloud.google.com/go/redis/apiv1/redispb"
-	redispb "google.golang.org/genproto/googleapis/cloud/redis/v1"
+	"google.golang.org/api/option"
+
+	redispb "cloud.google.com/go/redis/apiv1/redispb"
+	// redispb "google.golang.org/genproto/googleapis/cloud/redis/v1"
 )
 
 const (
@@ -17,9 +19,12 @@ const (
 )
 
 func TestGCPMemorystoreRedisInstanceExist(t common.TestingTB, testingContext *common.TestingContext) {
-
 	ctx := context.Background()
-	c, err := redis.NewCloudRedisClient(ctx)
+	serviceAccountJson, err := getGCPCredentials(ctx, testingContext.Client)
+	if err != nil {
+		t.Fatal("failed to retrieve gcp credentials %v", err)
+	}
+	c, err := redis.NewCloudRedisClient(ctx, option.WithCredentialsJSON(serviceAccountJson))
 	if err != nil {
 		t.Fatal("error create new cloud redis client %w", err)
 	}
@@ -34,24 +39,6 @@ func TestGCPMemorystoreRedisInstanceExist(t common.TestingTB, testingContext *co
 		t.Fatal("error get Default Region %w", err)
 	}
 
-	req := &redispb.ListInstancesRequest{
-		// TODO: Fill request struct fields.
-		// See https://pkg.go.dev/cloud.google.com/go/redis/apiv1/redispb#ListInstancesRequest.
-	}
-	var redisInstanceList []string
-	it := c.ListInstances(ctx, req)
-	for {
-		resp, err := it.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			t.Fatal("error get Redis instance %w", err)
-		}
-		_ = resp
-		fmt.Printf("%v\n", resp.Name)
-		redisInstanceList = append(redisInstanceList, resp.Name)
-	}
 	goContext := context.TODO()
 	rhmi, err := common.GetRHMI(testingContext.Client, true)
 	if err != nil {

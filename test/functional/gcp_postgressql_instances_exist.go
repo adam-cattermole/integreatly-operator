@@ -3,9 +3,10 @@ package functional
 import (
 	"context"
 	"fmt"
+
 	croResources "github.com/integr8ly/cloud-resource-operator/pkg/resources"
 	"github.com/integr8ly/integreatly-operator/test/common"
-	"golang.org/x/oauth2/google"
+	"google.golang.org/api/option"
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
 )
 
@@ -13,12 +14,12 @@ func TestGCPPostgresSQLInstanceExist(t common.TestingTB, testingContext *common.
 
 	//List of pSql instances available in Google Cloud Project
 	ctx := context.Background()
-	c, err := google.DefaultClient(ctx, sqladmin.CloudPlatformScope)
+	serviceAccountJson, err := getGCPCredentials(ctx, testingContext.Client)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatal("failed to retrieve gcp credentials %v", err)
 	}
 
-	sqladminService, err := sqladmin.New(c)
+	sqladminService, err := sqladmin.NewService(ctx, option.WithCredentialsJSON(serviceAccountJson))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +42,6 @@ func TestGCPPostgresSQLInstanceExist(t common.TestingTB, testingContext *common.
 	}
 
 	//Get List of pSql instances from RHOAM CR(s)
-	//goContext := context.TODO()
 	rhmi, err := common.GetRHMI(testingContext.Client, true)
 	if err != nil {
 		t.Fatalf("error getting RHMI CR: %v", err)
