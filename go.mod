@@ -232,3 +232,5 @@ replace k8s.io/client-go => k8s.io/client-go v0.24.3
 
 // Required until the following jira is resolved - https://issues.redhat.com/browse/MGDAPI-4996
 replace github.com/grafana-operator/grafana-operator/v4 => github.com/grafana-operator/grafana-operator/v4 v4.2.0
+
+replace github.com/integr8ly/cloud-resource-operator => github.com/adam-cattermole/cloud-resource-operator v0.32.2-0.20230414142601-fef571d84013

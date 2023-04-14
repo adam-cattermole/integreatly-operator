@@ -127,15 +127,13 @@ func (p *PostgresProvider) ReconcilePostgres(ctx context.Context, pg *v1alpha1.P
 		errMsg := "failed to reconcile network provider config"
 		return nil, croType.StatusMessage(errMsg), errorUtil.Wrap(err, errMsg)
 	}
-	address, err := networkManager.CreateNetworkIpRange(ctx, ipRangeCidr)
-	if err != nil {
-		msg := "failed to create network service"
-		return nil, croType.StatusMessage(msg), errorUtil.Wrap(err, msg)
+	address, msg, err := networkManager.CreateNetworkIpRange(ctx, ipRangeCidr)
+	if err != nil || msg != "" {
+		return nil, msg, err
 	}
-	_, err = networkManager.CreateNetworkService(ctx)
-	if err != nil {
-		msg := "failed to create network service"
-		return nil, croType.StatusMessage(msg), errorUtil.Wrap(err, msg)
+	_, msg, err = networkManager.CreateNetworkService(ctx)
+	if err != nil || msg != "" {
+		return nil, msg, err
 	}
 
 	return p.reconcileCloudSQLInstance(ctx, pg, sqlClient, strategyConfig, address, maintenanceWindowEnabled)
@@ -602,12 +600,25 @@ func (p *PostgresProvider) buildCloudSQLUpdateStrategy(cloudSQLConfig *gcpiface.
 		modifiedInstance.Settings.IpConfiguration = &sqladmin.IpConfiguration{
 			ForceSendFields: []string{},
 		}
-		if cloudSQLConfig.Settings.IpConfiguration != nil && foundInstance.Settings.IpConfiguration != nil {
-			if cloudSQLConfig.Settings.IpConfiguration.Ipv4Enabled != nil && *cloudSQLConfig.Settings.IpConfiguration.Ipv4Enabled != foundInstance.Settings.IpConfiguration.Ipv4Enabled {
-				modifiedInstance.Settings.IpConfiguration.Ipv4Enabled = *cloudSQLConfig.Settings.IpConfiguration.Ipv4Enabled
-				modifiedInstance.Settings.IpConfiguration.ForceSendFields = append(modifiedInstance.Settings.IpConfiguration.ForceSendFields, "Ipv4Enabled")
-				updateFound = true
-			}
+		if cloudSQLConfig.Settings.IpConfiguration.Ipv4Enabled != nil && *cloudSQLConfig.Settings.IpConfiguration.Ipv4Enabled != foundInstance.Settings.IpConfiguration.Ipv4Enabled {
+			modifiedInstance.Settings.IpConfiguration.Ipv4Enabled = *cloudSQLConfig.Settings.IpConfiguration.Ipv4Enabled
+			modifiedInstance.Settings.IpConfiguration.ForceSendFields = append(modifiedInstance.Settings.IpConfiguration.ForceSendFields, "Ipv4Enabled")
+			updateFound = true
+		}
+	}
+
+	if cloudSQLConfig.Settings.MaintenanceWindow != nil && foundInstance.Settings.MaintenanceWindow != nil {
+		modifiedInstance.Settings.MaintenanceWindow = &sqladmin.MaintenanceWindow{
+			ForceSendFields: []string{},
+		}
+		if cloudSQLConfig.Settings.MaintenanceWindow.Day != nil && *cloudSQLConfig.Settings.MaintenanceWindow.Day != foundInstance.Settings.MaintenanceWindow.Day {
+			modifiedInstance.Settings.MaintenanceWindow.Day = *cloudSQLConfig.Settings.MaintenanceWindow.Day
+			updateFound = true
+		}
+		if cloudSQLConfig.Settings.MaintenanceWindow.Hour != nil && *cloudSQLConfig.Settings.MaintenanceWindow.Hour != foundInstance.Settings.MaintenanceWindow.Hour {
+			modifiedInstance.Settings.MaintenanceWindow.Hour = *cloudSQLConfig.Settings.MaintenanceWindow.Hour
+			modifiedInstance.Settings.MaintenanceWindow.ForceSendFields = append(modifiedInstance.Settings.MaintenanceWindow.ForceSendFields, "Hour")
+			updateFound = true
 		}
 	}
 

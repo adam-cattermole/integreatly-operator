@@ -65,7 +65,7 @@ products:
         channel: rhmi
         installFrom: index
         package: rhmi-cloud-resources
-        index: quay.io/integreatly/cloud-resource-operator:index-v1.0.1
+        index: quay.io/acatterm/cloud-resource-operator:index-v1.0.2
     grafana:
         channel: rhmi
         installFrom: local
